@@ -15,7 +15,8 @@ from dizflow import __version__
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # release notes may contain arrows, emoji…
 ROOT = Path(__file__).resolve().parent
-notes = sys.argv[1] if len(sys.argv) > 1 else f"Dizflow {__version__}"
+texts = [a for a in sys.argv[1:] if not a.startswith("--")]
+notes = texts[0] if texts else f"Dizflow {__version__}"
 tag = f"v{__version__}"
 setup = ROOT / "dist" / "installer" / f"Dizflow-Setup-{__version__}.exe"
 
