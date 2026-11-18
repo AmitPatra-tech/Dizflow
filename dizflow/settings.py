@@ -17,7 +17,9 @@ DEFAULTS = {
     # AI
     "ai_provider": "gemini",             # gemini | claude | off
     "gemini_api_key": "",
-    "gemini_models": ["gemini-3.5-flash", "gemini-3.5-flash-lite"],
+    "gemini_models": ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+    "smart_skip": True,                  # paste Whisper's text directly when it's already clean
+    "ai_timeout": 4.0,                   # seconds to wait for AI cleanup before pasting the local version
     "anthropic_api_key": "",
     "claude_model": "claude-opus-5-5",
     "styles": {"chat": "casual", "email": "formal", "code": "neutral", "docs": "formal", "other": "neutral"},
@@ -41,6 +43,10 @@ class Settings:
                 stored = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
                 self.data.update(stored)
                 self.data["styles"] = {**DEFAULTS["styles"], **stored.get("styles", {})}
+                # 1.1 put gemini-3.5-flash first; it became slow/unreliable, so move to the fast lite models.
+                if stored.get("gemini_models") in (["gemini-3.5-flash", "gemini-3.5-flash-lite"],
+                                                   ["gemini-3.5-flash"]):
+                    self.data["gemini_models"] = list(DEFAULTS["gemini_models"])
             except json.JSONDecodeError:
                 pass
         else:

@@ -6,11 +6,12 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QDialog, QFrame, QHBo
 
 from .. import __version__, audio, system
 from .overlay import Overlay
-from .pages import (HomePage, HistoryPage, DictionaryPage, SnippetsPage, StylePage, SettingsPage, _combo)
+from .pages import (HomePage, InsightsPage, HistoryPage, DictionaryPage, SnippetsPage, StylePage, SettingsPage, _combo)
 from .theme import app_icon
 from .widgets import LevelMeter, label, kbd_row
 
-NAV = [("🏠", "Home"), ("🕘", "History"), ("📖", "Dictionary"), ("✂", "Snippets"), ("🎨", "Style"), ("⚙", "Settings")]
+NAV = [("🏠", "Home"), ("📊", "Insights"), ("🕘", "History"), ("📖", "Dictionary"), ("✂", "Snippets"),
+       ("🎨", "Style"), ("⚙", "Settings")]
 
 
 class UpdateBanner(QFrame):
@@ -20,8 +21,8 @@ class UpdateBanner(QFrame):
         super().__init__()
         self.u = updater
         self.setObjectName("updateBanner")
-        self.setStyleSheet("#updateBanner { background: #EEEDFE; border-bottom: 1px solid #DCD8FD; }"
-                           "#updateBanner QLabel { color: #3B2FC9; }")
+        self.setStyleSheet("#updateBanner { background: #E8F0FE; border-bottom: 1px solid #C9DBFC; }"
+                           "#updateBanner QLabel { color: #1E40AF; }")
         h = QHBoxLayout(self)
         h.setContentsMargins(36, 10, 36, 10)
         self.text = label("")
@@ -96,9 +97,10 @@ class MainWindow(QMainWindow):
         sl.addSpacing(18)
 
         self.stack = QStackedWidget()
-        self.pages = [HomePage(engine, settings), HistoryPage(engine), DictionaryPage(engine),
-                      SnippetsPage(engine), StylePage(settings), SettingsPage(engine, settings, updater)]
-        self.pages[5].hotkeys_changed.connect(lambda: self.pages[0].refresh())
+        self.settings_page = SettingsPage(engine, settings, updater)
+        self.pages = [HomePage(engine, settings), InsightsPage(engine), HistoryPage(engine), DictionaryPage(engine),
+                      SnippetsPage(engine), StylePage(settings), self.settings_page]
+        self.settings_page.hotkeys_changed.connect(lambda: self.pages[0].refresh())
         group = QButtonGroup(self)
         for i, ((icon, name), page) in enumerate(zip(NAV, self.pages)):
             b = QPushButton(f"{icon}   {name}")

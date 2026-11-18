@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QLab
                                QVBoxLayout, QWidget, QCheckBox, QInputDialog)
 
 from .. import audio, system
-from .widgets import StatCard, WeekChart, Segmented, LevelMeter, card, label, kbd_row
+from .widgets import StatCard, WeekChart, Segmented, LevelMeter, AppBar, card, label, kbd_row
 
 
 def scroll_page(title, subtitle=""):
@@ -169,6 +169,124 @@ class HomePage(QScrollArea):
             self.recent.addWidget(label("Nothing yet - your dictations will show up here.", "muted"))
         for r in rows:
             self.recent.addWidget(HistoryRow(r))
+
+
+# ============================================================ Insights
+def fmt_duration(secs: float) -> str:
+    s = int(round(secs or 0))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60:02d}s"
+    return f"{s // 3600}h {s % 3600 // 60:02d}m"
+
+
+class InsightsPage(QScrollArea):
+    """Per-day words spoken, words corrected, speaking time and the apps used most."""
+
+    def __init__(self, engine):
+        super().__init__()
+        self.e = engine
+        self.days = 7
+        self.setWidgetResizable(True)
+        inner = QWidget()
+        inner.setObjectName("content")
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(36, 30, 36, 30)
+        lay.setSpacing(18)
+        self.setWidget(inner)
+
+        top = QHBoxLayout()
+        top.addWidget(label("Insights", "h1"))
+        top.addStretch()
+        rng = Segmented([("7", "Last 7 days"), ("30", "Last 30 days")], "7")
+        rng.changed.connect(lambda v: (setattr(self, "days", int(v)), self.refresh()))
+        top.addWidget(rng)
+        lay.addLayout(top)
+
+        lay.addWidget(label("Today", "h2"))
+        grid = QGridLayout()
+        grid.setSpacing(14)
+        self.t_spoken = StatCard("Words spoken", "🎙")
+        self.t_fixed = StatCard("Words corrected by Dizflow", "✨")
+        self.t_time = StatCard("Time speaking", "⏱")
+        self.t_app = StatCard("Most used app", "🏆")
+        for i, c in enumerate((self.t_spoken, self.t_fixed, self.t_time, self.t_app)):
+            grid.addWidget(c, 0, i)
+        lay.addLayout(grid)
+
+        chart_card, cl = card()
+        self.chart_title = label("", "h2")
+        cl.addWidget(self.chart_title)
+        self.chart = WeekChart()
+        cl.addWidget(self.chart)
+        self.range_totals = label("", "muted", wrap=True)
+        cl.addWidget(self.range_totals)
+        lay.addWidget(chart_card)
+
+        apps_card, al = card()
+        self.apps_title = label("", "h2")
+        al.addWidget(self.apps_title)
+        self.apps = QVBoxLayout()
+        self.apps.setSpacing(4)
+        al.addLayout(self.apps)
+        lay.addWidget(apps_card)
+
+        table_card, tl = card()
+        tl.addWidget(label("Day by day", "h2"))
+        self.table = QGridLayout()
+        self.table.setHorizontalSpacing(18)
+        self.table.setVerticalSpacing(8)
+        tl.addLayout(self.table)
+        lay.addWidget(table_card)
+        lay.addStretch()
+
+    def refresh(self):
+        days = self.e.store.daily(self.days)
+        today = days[0]
+        self.t_spoken.set(f"{today['spoken']:,}")
+        pct = f"  ({today['corrected'] * 100 // today['spoken']}%)" if today["spoken"] else ""
+        self.t_fixed.set(f"{today['corrected']:,}{pct}")
+        self.t_time.set(fmt_duration(today["seconds"]))
+        self.t_app.set(today["top_app"] or "–")
+
+        self.chart_title.setText(f"Words spoken · last {self.days} days")
+        self.chart.set_data([(d["date"], d["spoken"]) for d in reversed(days)])
+        spoken = sum(d["spoken"] for d in days)
+        fixed = sum(d["corrected"] for d in days)
+        secs = sum(d["seconds"] for d in days)
+        active = sum(1 for d in days if d["dictations"])
+        self.range_totals.setText(
+            f"{spoken:,} words spoken in {sum(d['dictations'] for d in days)} dictations over {active} active "
+            f"day{'s' if active != 1 else ''} · {fixed:,} words corrected · {fmt_duration(secs)} speaking"
+            + (f" · about {round(spoken / active):,} words a day" if active else ""))
+
+        self.apps_title.setText(f"Apps you dictate into most · last {self.days} days")
+        _clear(self.apps)
+        apps = self.e.store.top_apps(self.days)
+        if not apps:
+            self.apps.addWidget(label("No dictations in this period yet.", "muted"))
+        top_words = max([a["words"] for a in apps] + [1])
+        for a in apps:
+            share = a["words"] * 100 // max(1, spoken)
+            self.apps.addWidget(AppBar(a["app"], a["words"] / top_words,
+                                       f"{a['words']:,} words · {share}% · {a['dictations']} times · "
+                                       f"{fmt_duration(a['seconds'])}"))
+
+        _clear(self.table)
+        heads = ["Day", "Dictations", "Words spoken", "Words corrected", "Time speaking", "Most used app"]
+        for c, hname in enumerate(heads):
+            self.table.addWidget(label(hname, "statLabel"), 0, c)
+        rows = [d for d in days if d["dictations"]]
+        if not rows:
+            self.table.addWidget(label("Nothing yet - start dictating with your hotkey.", "muted"), 1, 0, 1, 6)
+        for r, d in enumerate(rows, 1):
+            day = datetime.fromisoformat(d["date"])
+            name = "Today" if r == 1 and d["date"] == days[0]["date"] else day.strftime("%a %d %b")
+            pct = f" ({d['corrected'] * 100 // d['spoken']}%)" if d["spoken"] else ""
+            for c, v in enumerate([name, d["dictations"], f"{d['spoken']:,}", f"{d['corrected']:,}{pct}",
+                                   fmt_duration(d["seconds"]), d["top_app"] or "–"]):
+                self.table.addWidget(label(str(v)), r, c)
 
 
 # ============================================================ History
@@ -522,6 +640,11 @@ class SettingsPage(QScrollArea):
         cl.addWidget(self.cl_row)
         for w in (self.gem_key, self.cl_key):
             w.setMinimumWidth(280)
+        fast = QCheckBox()
+        fast.setChecked(bool(self.s.get("smart_skip", True)))
+        fast.toggled.connect(lambda v: self.s.set("smart_skip", v))
+        cl.addWidget(_row("Fast mode", "When what you said is already clean, type it instantly and skip the AI. "
+                          "The AI is still used for “um”s, “no wait…” corrections and spoken formatting.", fast))
         self._provider_rows()
         lay.addWidget(c)
 

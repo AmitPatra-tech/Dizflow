@@ -6,7 +6,7 @@ import time
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from . import audio, system
-from .llm import LLM, protect_snippets, restore_snippets
+from .llm import LLM, count_corrections, local_clean, needs_ai, protect_snippets, restore_snippets
 from .store import Store
 
 log = logging.getLogger("dizflow")
@@ -78,6 +78,7 @@ class Engine(QObject):
             self.started = time.time()
             self._released_ticks = 0
             self._watchdog.start()
+            self.llm.warm_up()  # connect to the AI service while the user is still talking
             self._sound("start")
             self.state.emit("recording" if kind == "dictate" else "command")
         elif action == "switch" and self.kind:
@@ -122,9 +123,10 @@ class Engine(QObject):
                 ok = False
                 return
             if kind == "command":
-                text = self._run_command(raw, terms)
+                text, how = self._run_command(raw, terms), "ai"
             else:
-                text = self._run_dictation(raw, target, terms)
+                text, how = self._run_dictation(raw, target, terms)
+            t2 = time.time()
             if not text:
                 ok = False
                 return
@@ -132,8 +134,11 @@ class Engine(QObject):
             if self.s["add_trailing_space"] and kind == "dictate" and not text.endswith(("\n", " ")):
                 text += " "
             system.paste_text(text, self.s["restore_clipboard"])
-            log.info("%s %.1fs -> %s | whisper %.2fs | total %.2fs", kind, seconds, target, t1 - t0, time.time() - t0)
-            self.store.add_history(kind, target, raw, text.rstrip(" "), seconds)
+            log.info("%s %.1fs audio -> %s | whisper %.2fs | %s %.2fs | on screen after %.2fs",
+                     kind, seconds, target.split(" - ")[0], t1 - t0, how, t2 - t1, time.time() - t0)
+            final = text.rstrip(" ")
+            self.store.add_history(kind, target, raw, final, seconds,
+                                   corrections=0 if kind == "command" else count_corrections(raw, final))
             self.finished.emit()
         except Exception as e:
             log.exception("processing failed")
@@ -146,18 +151,26 @@ class Engine(QObject):
             self.state.emit("idle" if ok else "error")
 
     def _run_dictation(self, raw, target, terms):
+        """Returns (text, how): how is 'ai', 'fast' (already clean, AI skipped) or 'local' (AI too slow/off)."""
         protected, mapping = protect_snippets(raw, self.store.snippets())
-        text = protected
-        if self.llm.enabled:
-            try:
-                text = self.llm.cleanup(protected, target, terms)
-                # The model must keep every placeholder; if it lost one, fall back to the raw text.
-                if any(tok not in text for tok in mapping):
-                    text = protected
-            except Exception as e:
-                log.warning("cleanup failed: %s", e)
-                self.notice.emit("AI cleanup unavailable - typed the raw transcript")
-        return restore_snippets(text, mapping)
+        quick = local_clean(protected)
+        if not self.llm.enabled:
+            return restore_snippets(quick, mapping), "local"
+        if self.s.get("smart_skip", True) and not needs_ai(protected):
+            return restore_snippets(quick, mapping), "fast"
+        try:
+            text = self.llm.cleanup(protected, target, terms, deadline=float(self.s.get("ai_timeout", 4.0)))
+            # The model must keep every placeholder; if it lost one, use the local version.
+            if any(tok not in text for tok in mapping):
+                text = quick
+            return restore_snippets(text, mapping), "ai"
+        except TimeoutError:
+            log.warning("AI cleanup too slow - pasted the local version")
+            return restore_snippets(quick, mapping), "local"
+        except Exception as e:
+            log.warning("cleanup failed: %s", e)
+            self.notice.emit("AI cleanup unavailable - typed the transcript")
+            return restore_snippets(quick, mapping), "local"
 
     def _run_command(self, instruction, terms):
         if not self.llm.enabled:
