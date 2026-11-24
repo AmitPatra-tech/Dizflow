@@ -104,6 +104,16 @@ class HomePage(QScrollArea):
         hl.addLayout(self.hero_rows)
         self.lay.addWidget(hero)
 
+        status, sl = card()
+        sl.setSpacing(6)
+        self.mic_line = label("", wrap=True)
+        self.model_line = label("", "muted", wrap=True)
+        sl.addWidget(self.mic_line)
+        sl.addWidget(self.model_line)
+        engine.status.connect(lambda t: self.model_line.setText(f"🧠  Speech model: {t}"))
+        self.status_card = status
+        self.lay.addWidget(status)
+
         grid = QGridLayout()
         grid.setSpacing(14)
         self.c_words = StatCard("Words dictated", "✍")
@@ -153,6 +163,18 @@ class HomePage(QScrollArea):
             w.setLayout(row)
             row.setContentsMargins(0, 0, 0, 0)
             self.hero_rows.addWidget(w)
+        ok, mic = audio.mic_status()
+        chosen = self.s["microphone"]
+        if ok:
+            self.mic_line.setText(f"🎙  Microphone: {chosen or mic}" + ("" if chosen else "  (Windows default)"))
+            self.mic_line.setStyleSheet("")
+            self.status_card.setStyleSheet("")
+        else:
+            self.mic_line.setText(f"⚠  {mic}")
+            self.mic_line.setStyleSheet("color: #B42318; font-weight: 600;")
+            self.status_card.setStyleSheet("QFrame#card { background: #FEF3F2; border-color: #FECDCA; }")
+        self.model_line.setText(f"🧠  Speech model: {self.e.status_text}")
+
         st = self.e.store.stats()
         self.c_words.set(f"{st['words']:,}")
         self.c_wpm.set(st["wpm"] or "–")

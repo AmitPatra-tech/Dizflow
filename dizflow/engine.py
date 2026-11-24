@@ -69,10 +69,19 @@ class Engine(QObject):
             self.target = system.foreground_app()
             try:
                 self.recorder.start(self.s["microphone"])
-            except Exception as e:
-                self.notice.emit(f"Microphone error: {e}")
+            except audio.NoMicrophoneError as e:
+                log.warning("no microphone available")
+                self.notice.emit(str(e))
+                self._sound("error")
                 self.state.emit("error")
                 return
+            except Exception as e:
+                log.exception("microphone failed to open")
+                self.notice.emit(f"Couldn't open the microphone: {e}")
+                self._sound("error")
+                self.state.emit("error")
+                return
+            log.info("recording from %s", self.recorder.device_name)
             self.kind = kind
             self.hotkeys.set_active(kind)
             self.started = time.time()
@@ -100,10 +109,27 @@ class Engine(QObject):
             return
         kind, self.kind = self.kind, None
         self.hotkeys.set_active(None)
+        held = time.time() - self.started
         clip = self.recorder.stop()
         self._sound("stop")
+        mic = self.recorder.device_name or "your microphone"
+        if held > 0.8 and self.recorder.blocks == 0:
+            log.warning("no audio arrived from %s", mic)
+            self.notice.emit(f"{mic} isn't sending any audio. Check it's connected, or pick another mic in Settings.")
+            self.state.emit("error")
+            return
         if len(clip) < audio.RATE * 0.3:
             self.state.emit("idle")
+            return
+        if held > 1.0 and float(abs(clip).max()) < 0.002:
+            log.warning("%s recorded only silence", mic)
+            self.notice.emit(f"{mic} only picked up silence. Is it muted? Check Windows Sound settings.")
+            self.state.emit("error")
+            return
+        if not self.transcriber.ready.is_set():
+            self.notice.emit((self.transcriber.downloading or "The speech model is still loading")
+                             + ". Try again in a moment.")
+            self.state.emit("error")
             return
         self.busy = True
         self.state.emit("processing")

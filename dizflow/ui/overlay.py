@@ -58,11 +58,12 @@ class Overlay(QWidget):
         self.message = text
         self.mode = "notice"
         fm_w = self.fontMetrics().horizontalAdvance(text) + 56
-        self.resize(max(220, min(fm_w, 640)), 46)
+        w = max(220, min(fm_w, 720))
+        self.resize(w, 46 if fm_w <= 720 else 64)  # long messages wrap onto two lines
         self._place()
         self.show()
         self.timer.start()
-        self.hide_timer.start(2600)
+        self.hide_timer.start(min(7000, 2600 + 35 * len(text)))  # give longer messages time to be read
 
     def _hide(self):
         self.mode = "idle"
@@ -110,5 +111,5 @@ class Overlay(QWidget):
         elif self.mode in ("notice", "error"):
             p.setPen(QColor("white"))
             p.setFont(QFont("Segoe UI", 9))
-            p.drawText(QRectF(18, 0, w - 36, h), Qt.AlignCenter, self.message or "Something went wrong")
+            p.drawText(QRectF(18, 0, w - 36, h), Qt.AlignCenter | Qt.TextWordWrap, self.message or "Something went wrong")
         p.end()
